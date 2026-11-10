@@ -1,0 +1,105 @@
+rules_version = '2';
+
+// Paste this in Firebase Console -> Firestore Database -> (your database) -> Rules -> Publish.
+// Every document belongs to one signed-in owner; nobody can read or change another owner's data.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isOwner(ownerId) {
+      return signedIn() && request.auth.uid == ownerId;
+    }
+    function validId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+
+    function validCustomer(d) {
+      return d.keys().hasOnly(['id', 'ownerId', 'name', 'phone', 'address', 'notes', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['id', 'ownerId', 'name', 'createdAt', 'updatedAt'])
+        && validId(d.id)
+        && d.ownerId is string
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 100
+        && (!('phone' in d) || (d.phone is string && d.phone.size() <= 25))
+        && (!('address' in d) || (d.address is string && d.address.size() <= 200))
+        && (!('notes' in d) || (d.notes is string && d.notes.size() <= 300))
+        && d.createdAt is number
+        && d.updatedAt is number;
+    }
+
+    function validTransaction(d) {
+      return d.keys().hasOnly(['id', 'ownerId', 'customerId', 'type', 'amount', 'date', 'time', 'description', 'billNumber', 'paymentMode', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['id', 'ownerId', 'customerId', 'type', 'amount', 'date', 'createdAt', 'updatedAt'])
+        && validId(d.id)
+        && d.ownerId is string
+        && validId(d.customerId)
+        && d.type in ['udhar', 'jama']
+        && d.amount is number && d.amount > 0 && d.amount <= 100000000
+        && d.date is string && d.date.size() <= 20
+        && (!('time' in d) || (d.time is string && d.time.size() <= 20))
+        && (!('description' in d) || (d.description is string && d.description.size() <= 250))
+        && (!('billNumber' in d) || (d.billNumber is string && d.billNumber.size() <= 60))
+        && (!('paymentMode' in d) || d.paymentMode in ['cash', 'upi', 'bank_transfer', 'cheque'])
+        && d.createdAt is number
+        && d.updatedAt is number;
+    }
+
+    function validSettings(d) {
+      return d.ownerId is string
+        && (!('businessName' in d) || (d.businessName is string && d.businessName.size() <= 120))
+        && (!('ownerName' in d) || (d.ownerName is string && d.ownerName.size() <= 100))
+        && (!('phone' in d) || (d.phone is string && d.phone.size() <= 25))
+        && (!('address' in d) || (d.address is string && d.address.size() <= 200))
+        && (!('upiId' in d) || (d.upiId is string && d.upiId.size() <= 60));
+    }
+
+    function validUser(d) {
+      return d.ownerId is string
+        && d.email is string && d.email.size() <= 120
+        && (!('businessName' in d) || (d.businessName is string && d.businessName.size() <= 120))
+        && (!('ownerName' in d) || (d.ownerName is string && d.ownerName.size() <= 100));
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && incoming().ownerId == userId && validUser(incoming());
+      allow update: if isOwner(userId) && existing().ownerId == userId && incoming().ownerId == userId && validUser(incoming());
+      allow delete: if false;
+    }
+
+    match /businessSettings/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && incoming().ownerId == userId && validSettings(incoming());
+      allow update: if isOwner(userId) && existing().ownerId == userId && incoming().ownerId == userId && validSettings(incoming());
+      allow delete: if false;
+    }
+
+    match /customers/{customerId} {
+      allow get: if signedIn() && isOwner(existing().ownerId);
+      allow list: if signedIn() && isOwner(existing().ownerId);
+      allow create: if signedIn() && validId(customerId) && incoming().id == customerId
+        && isOwner(incoming().ownerId) && validCustomer(incoming());
+      allow update: if signedIn() && isOwner(existing().ownerId)
+        && incoming().ownerId == existing().ownerId && incoming().id == customerId && validCustomer(incoming());
+      allow delete: if signedIn() && isOwner(existing().ownerId);
+    }
+
+    match /transactions/{txId} {
+      allow get: if signedIn() && isOwner(existing().ownerId);
+      allow list: if signedIn() && isOwner(existing().ownerId);
+      allow create: if signedIn() && validId(txId) && incoming().id == txId
+        && isOwner(incoming().ownerId) && validTransaction(incoming());
+      allow update: if signedIn() && isOwner(existing().ownerId)
+        && incoming().ownerId == existing().ownerId && incoming().id == txId && validTransaction(incoming());
+      allow delete: if signedIn() && isOwner(existing().ownerId);
+    }
+  }
+}
